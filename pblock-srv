@@ -1,0 +1,77 @@
+#!/usr/bin/env python
+
+import argparse
+import logging
+import pblock
+import sys
+
+
+parser = argparse.ArgumentParser(description="Serve a file using pblock connection.")
+parser.add_argument(
+    "-r", "--reading-stream",
+    dest='reading_stream', default=3, type=str,
+    help="stream for reading from client, when numeric it's treated as fd (default fd 3)",
+)
+parser.add_argument(
+    "-w", "--writing-stream",
+    dest='writing_stream', default=3, type=str,
+    help="stream for writing to client, when numeric it's treated as fd (default fd 3)",
+)
+parser.add_argument(
+    "-v", "--verbose",
+    dest='verbose_count', action='count', default=0,
+    help="increases log verbosity for each occurence",
+)
+parser.add_argument(
+    "file", type=argparse.FileType('r+b'),
+    help="file to serve",
+)
+
+if __name__ == '__main__':
+    arguments = parser.parse_args()
+
+    # Sets log level to WARN going more verbose for each new -v.
+    logging.basicConfig(
+        format='%(levelname)s: %(message)s',
+        level=max(3 - arguments.verbose_count, 0) * 10,
+    )
+
+    logging.info("pblock-srv running with commandline {}".format(sys.argv))
+
+    logging.debug("attaching to reading stream")
+    arguments.reading_stream = pblock.custom_opener('rb')(arguments.reading_stream)
+    logging.debug("attaching to writing stream")
+    arguments.writing_stream = pblock.custom_opener('wb')(arguments.writing_stream)
+
+    while True:
+        # receive request
+        t = pblock.Transaction.from_stream(arguments.reading_stream)
+        logging.debug("received incoming transaction ({} segments)".format(len(t.segments)))
+
+        response_segments = []
+
+        for segment in t.segments:
+            if segment.type == pblock.SegmentType.WRITE:
+                logging.debug("received data (write) segment (offset {}, length {})".format(
+                    segment.offset, segment.length,
+                ))
+                arguments.file.seek(segment.offset)
+                arguments.file.write(segment.payload)
+            elif segment.type == pblock.SegmentType.READ:
+                logging.debug("received request (read) segment (offset {}, length {})".format(
+                    segment.offset, segment.length,
+                ))
+                arguments.file.seek(segment.offset)
+                d = arguments.file.read(segment.length)
+                response_segments.append(pblock.Segment.write_request(segment.offset, d))
+            else:
+                logging.warning("received segment of unsupported type ({})".format(
+                    segment,
+                ))
+
+        # respond
+        logging.debug("sending back response ({} segments)".format(
+            len(response_segments),
+        ))
+        pblock.Transaction(response_segments).write_to_stream(arguments.writing_stream)
+        arguments.writing_stream.flush()
