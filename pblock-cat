@@ -9,8 +9,8 @@ import sys
 parser = argparse.ArgumentParser(description="Read pblock connection until first unset space.")
 parser.add_argument(
     "-o", "--output",
-    dest='output', default=sys.stdout.buffer, type=pblock.custom_opener('wb'),
-    help="where to print read data, when numeric it's treated as fd (dafult stdout)",
+    dest='output', default=sys.stdout.buffer, type=argparse.FileType('wb'),
+    help="where to print received data (dafult stdout)",
 )
 parser.add_argument(
     "-s", "--offset",
@@ -54,10 +54,10 @@ if __name__ == '__main__':
 
     logging.info("pblock-cat running with commandline {}".format(sys.argv))
 
-    logging.debug("attaching to writing stream")
-    arguments.writing_stream = pblock.custom_opener('wb')(arguments.writing_stream)
-    logging.debug("attaching to reading stream")
-    arguments.reading_stream = pblock.custom_opener('rb')(arguments.reading_stream)
+    connection = pblock.ConnectionToServer.open(
+        arguments.reading_stream,
+        arguments.writing_stream,
+    )
 
     offset = arguments.offset
     while arguments.count < 0 or offset < arguments.offset + arguments.count:
@@ -72,14 +72,14 @@ if __name__ == '__main__':
             )
         pblock.Transaction([
             pblock.Segment.read_request(offset, to_read),
-        ]).write_to_stream(arguments.writing_stream)
-        arguments.writing_stream.flush()
+        ]).write_to_stream(connection.writing_stream)
+        connection.writing_stream.flush()
         logging.debug("request for data sent (offset {}, length {})".format(
             offset, arguments.block_size,
         ))
 
         # receive response
-        t = pblock.Transaction.from_stream(arguments.reading_stream)
+        t = pblock.Transaction.from_stream(connection.reading_stream)
         logging.debug("received incoming transaction ({} segments)".format(len(t.segments)))
         if len(t.segments) == 0:
             # no data in this range

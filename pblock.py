@@ -1,19 +1,12 @@
 from collections import namedtuple
 from enum import Enum
 import fcntl
+import logging
 import os
 import varint
 
 
-def custom_opener(mode):
-    def open_a_file(arg):
-        try:
-            arg = int(arg)
-        except ValueError:
-            pass
-        return open(arg, mode)
-
-    return open_a_file
+logger = logging.getLogger(__name__)
 
 
 class Transaction(namedtuple('Transaction', ('segments'))):
@@ -88,3 +81,40 @@ class Segment(namedtuple('Segment', ('type', 'offset', 'length', 'payload'))):
         stream.write(varint.encode(self.length))
         if self.type == SegmentType.WRITE:
             stream.write(self.payload)
+
+
+class Connection(namedtuple('Connection', ('reading_stream', 'writing_stream'))):
+    @classmethod
+    def open_desc(cls, desc, mode):
+        # try parse to int - it may be fd
+        try:
+            desc = int(desc)
+        except ValueError:
+            pass
+        return open(desc, mode)
+
+
+class ConnectionToClient(Connection):
+    @classmethod
+    def open(cls, r_desc, w_desc):
+        logger.debug("opening reading connection to client: {}".format(r_desc))
+        r = cls.open_desc(r_desc, 'rb')
+        logger.debug("opening writing connection to client: {}".format(w_desc))
+        w = cls.open_desc(w_desc, 'wb')
+        return cls(
+            reading_stream=r,
+            writing_stream=w,
+        )
+
+
+class ConnectionToServer(Connection):
+    @classmethod
+    def open(cls, r_desc, w_desc):
+        logger.debug("opening writing connection to server: {}".format(w_desc))
+        w = cls.open_desc(w_desc, 'wb')
+        logger.debug("opening reading connection to server: {}".format(r_desc))
+        r = cls.open_desc(r_desc, 'rb')
+        return cls(
+            reading_stream=r,
+            writing_stream=w,
+        )

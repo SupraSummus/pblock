@@ -38,14 +38,14 @@ if __name__ == '__main__':
 
     logging.info("pblock-srv running with commandline {}".format(sys.argv))
 
-    logging.debug("attaching to reading stream")
-    arguments.reading_stream = pblock.custom_opener('rb')(arguments.reading_stream)
-    logging.debug("attaching to writing stream")
-    arguments.writing_stream = pblock.custom_opener('wb')(arguments.writing_stream)
+    connection = pblock.ConnectionToClient.open(
+        arguments.reading_stream,
+        arguments.writing_stream,
+    )
 
     while True:
         # receive request
-        t = pblock.Transaction.from_stream(arguments.reading_stream)
+        t = pblock.Transaction.from_stream(connection.reading_stream)
         logging.debug("received incoming transaction ({} segments)".format(len(t.segments)))
 
         response_segments = []
@@ -73,5 +73,5 @@ if __name__ == '__main__':
         logging.debug("sending back response ({} segments)".format(
             len(response_segments),
         ))
-        pblock.Transaction(response_segments).write_to_stream(arguments.writing_stream)
-        arguments.writing_stream.flush()
+        pblock.Transaction(response_segments).write_to_stream(connection.writing_stream)
+        connection.writing_stream.flush()
