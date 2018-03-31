@@ -1,0 +1,12 @@
+nodes:
+  - command: [pblock-srv, test_file.txt]
+    sockets:
+      3: file
+  - command: [pblock-cat]
+    sockets:
+      3: file
+    outputs:
+      1: check
+  - command: [./stdin-eq, '0123456789\n']
+    inputs:
+      0: check

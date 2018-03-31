@@ -46,6 +46,9 @@ if __name__ == '__main__':
     while True:
         # receive request
         t = pblock.Transaction.from_stream(connection.reading_stream)
+        if t is None:
+            logging.info("exiting because reding stream is closed")
+            sys.exit()
         logging.debug("received incoming transaction ({} segments)".format(len(t.segments)))
 
         response_segments = []

@@ -12,7 +12,11 @@ logger = logging.getLogger(__name__)
 class Transaction(namedtuple('Transaction', ('segments'))):
     @classmethod
     def from_stream(cls, stream):
-        length = varint.decode_stream(stream)
+        try:
+            # realy we should try-catch only first byte but no easy posibilities
+            length = varint.decode_stream(stream)
+        except EOFError:
+            return None
         segments = [Segment.from_stream(stream) for _ in range(length)]
         return cls(segments=segments)
 
@@ -29,7 +33,8 @@ class SegmentType(Enum):
     @classmethod
     def from_stream(cls, stream):
         read_value = stream.read(1)
-        assert(len(read_value) == 1)
+        if len(read_value) != 1:
+            raise EOFError()
         if read_value == cls.READ.value:
             return cls.READ
         elif read_value == cls.WRITE.value:
@@ -68,6 +73,8 @@ class Segment(namedtuple('Segment', ('type', 'offset', 'length', 'payload'))):
         payload = None
         if type == SegmentType.WRITE:
             payload = stream.read(length)
+            if len(payload) != length:
+                raise EOFError()
         return cls(
             type=type,
             offset=offset,
