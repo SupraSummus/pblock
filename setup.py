@@ -8,6 +8,7 @@ setup(
     scripts=[
         'pblock-srv',
         'pblock-cat',
+        'pblock-mix',
     ],
     install_requires=[
         'varint',

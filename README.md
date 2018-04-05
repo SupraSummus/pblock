@@ -20,6 +20,7 @@ Tools in progress:
   * write support to be added
   * should not support gaps in file
   * rename to `pblock-read` because it's not like `cat` at all
+* `pblock-mix`
 
 Tools intended:
 

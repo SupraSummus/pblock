@@ -1,0 +1,167 @@
+#!/usr/bin/env python
+
+import argparse
+from collections import namedtuple
+import logging
+import pblock
+import sys
+import threading
+import queue
+
+
+parser = argparse.ArgumentParser(description="Merge many pblock servers and/or handle multiple clients.")
+parser.add_argument(
+    "-c", "--client",
+    dest='client', type=str, default=3,
+    help="stream to client, when numeric it's treated as fd",
+)
+parser.add_argument(
+    "-s", "--server",
+    dest='servers', type=str, action='append',
+    help="stream to server, when numeric it's treated as fd, can be specified multiple times",
+)
+parser.add_argument(
+    "-f", "--offset",
+    dest='offsets', type=int, action='append',
+    help="offset for corresponding server (in order)",
+)
+parser.add_argument(
+    "-b", "--count",
+    dest='sizes', type=int, action='append',
+    help="size for corresponding server (in order)",
+)
+parser.add_argument(
+    "-t", "--shift",
+    dest='shifts', type=int, action='append',
+    help="shift for corresponding server (in order)",
+)
+parser.add_argument(
+    "-v", "--verbose",
+    dest='verbose_count', action='count', default=0,
+    help="increases log verbosity for each occurence",
+)
+
+
+# TODO use interval tree. Someday... maybe...
+Interval = namedtuple('ServerDescription', ('offset', 'size', 'server'))
+
+
+def common_range(a_off, a_len, b_off, b_len):
+    off = max(a_off, b_off)
+    end = min(a_off + a_len, b_off + b_len)
+    size = end - off
+    return off, size
+
+
+class SubServer(pblock.ConnectionToServer):
+    def __init__(self, shift, **kwargs):
+        super().__init__(**kwargs)
+        self.upstream = None
+        self.shift = shift
+
+    def handle_write_header(self, offset, size):
+        self.upstream.send_write_header(offset - self.shift, size)
+        sent = pblock.move_between_fds(
+            self.reading_stream.fileno(),
+            self.upstream.writing_stream.fileno(),
+            size,
+        )
+        assert sent == size
+        return True
+
+    def send_read(self, offset, size):
+        return super().send_read(offset + self.shift, size)
+
+    def send_write_header(self, offset, size):
+        return super().send_write_header(offset + self.shift, size)
+
+
+class MixServer(pblock.ConnectionToClient):
+    def __init__(self, intervals, **kwargs):
+        super().__init__(**kwargs)
+        self.intervals = intervals
+        self.subtransactions = set()
+        self.response_queue = queue.Queue()
+        self.response_thread = threading.Thread(target=self.receive_responses)
+        for interval in self.intervals:
+            assert interval.server.upstream is None
+            interval.server.upstream = self
+
+    def receive_responses(self):
+        while True:
+            r = self.response_queue.get()
+            if r is None:
+                self.response_queue.task_done()
+                return
+
+            if r == pblock.SegmentType.COMMIT:
+                self.send_commit()
+            else:
+                r.server.handle_segment()
+            self.response_queue.task_done()
+
+    def handle_commit(self):
+        # close all transactions opened in this transaction
+        for t in self.subtransactions:
+            t.server.send_commit()
+            # read COMMIT back
+            self.response_queue.put(t)
+        self.subtransactions.clear()
+
+        # after handling all segments send commit to client
+        self.response_queue.put(pblock.SegmentType.COMMIT)
+
+        return False
+
+    def handle_read(self, offset, size):
+        for interval in self.intervals:
+            off, s = common_range(interval.offset, interval.size, offset, size)
+            if s > 0:
+                interval.server.send_read(off, s)
+                self.subtransactions.add(interval)
+                self.response_queue.put(interval)
+        return True
+
+    def run(self):
+        self.response_thread.start()
+        super().run()
+
+        # stop worker
+        self.response_queue.put(None)
+        self.response_queue.join()
+        self.response_thread.join()
+
+
+if __name__ == '__main__':
+    arguments = parser.parse_args()
+
+    # Sets log level to WARN going more verbose for each new -v.
+    logging.basicConfig(
+        format='%(process)d %(levelname)s: %(message)s',
+        level=max(3 - arguments.verbose_count, 0) * 10,
+    )
+
+    logging.info("pblock-hub running with commandline {}".format(sys.argv))
+
+    intervals = []
+    for s, offset, size, shift in zip(arguments.servers, arguments.offsets, arguments.sizes, arguments.shifts):
+        conn = SubServer(
+            reading_stream=s,
+            writing_stream=s,
+            shift=shift,
+        )
+        intervals.append(Interval(
+            server=conn,
+            offset=offset,
+            size=size,
+        ))
+
+    client_connection = MixServer(
+        reading_stream=arguments.client,
+        writing_stream=arguments.client,
+        intervals=intervals,
+    )
+    client_connection.run()
+
+    logging.info("pblock-mix exiting successfuly")
+    sys.exit()

@@ -1,0 +1,41 @@
+nodes:
+  - command: [pblock-srv, test_file.txt]
+    sockets:
+      3: file_a
+    outputs:
+      2: col1
+  - command: [pblock-srv, test_file.txt]
+    sockets:
+      3: file_b
+    outputs:
+      2: col2
+  - command: [pblock-mix, -c5, -s3, -f0, -t0, -b3, -s4, -f3, -t-2, -b5]
+    sockets:
+      3: file_a
+      4: file_b
+      5: file_merged
+    outputs:
+      2: col3
+  - command: [pblock-cat, 8]
+    sockets:
+      3: file_merged
+    outputs:
+      1: check
+      2: col4
+
+  - command: [./stdin-eq, '01212345']
+    inputs:
+      0: check
+
+  - command: [cat]
+    inputs:
+      0: col1
+  - command: [sed, -ue, s/^/\t\t/]
+    inputs:
+      0: col2
+  - command: [sed, -ue, s/^/\t\t\t\t/]
+    inputs:
+      0: col3
+  - command: [sed, -ue, s/^/\t\t\t\t\t\t/]
+    inputs:
+      0: col4

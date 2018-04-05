@@ -1,6 +1,4 @@
-from collections import namedtuple
 from enum import Enum
-import fcntl
 import logging
 import os
 import varint
@@ -9,88 +7,41 @@ import varint
 logger = logging.getLogger(__name__)
 
 
-class Transaction(namedtuple('Transaction', ('segments'))):
-    @classmethod
-    def from_stream(cls, stream):
-        try:
-            # realy we should try-catch only first byte but no easy posibilities
-            length = varint.decode_stream(stream)
-        except EOFError:
-            return None
-        segments = [Segment.from_stream(stream) for _ in range(length)]
-        return cls(segments=segments)
-
-    def write_to_stream(self, stream):
-        stream.write(varint.encode(len(self.segments)))
-        for segment in self.segments:
-            segment.write_to_stream(stream)
-
-
 class SegmentType(Enum):
     READ = b'r'
     WRITE = b'w'
+    COMMIT = b'c'
 
     @classmethod
     def from_stream(cls, stream):
         read_value = stream.read(1)
         if len(read_value) != 1:
             raise EOFError()
-        if read_value == cls.READ.value:
-            return cls.READ
-        elif read_value == cls.WRITE.value:
-            return cls.WRITE
-        else:
-            assert(False)
+        for v in cls:
+            if v.value == read_value:
+                return v
+        assert(False)
 
     def write_to_stream(self, stream):
         stream.write(self.value)
 
 
-class Segment(namedtuple('Segment', ('type', 'offset', 'length', 'payload'))):
-    @classmethod
-    def read_request(cls, offset, length):
-        return cls(
-            type=SegmentType.READ,
-            offset=offset,
-            length=length,
-            payload=None,
-        )
-
-    @classmethod
-    def write_request(cls, offset, buf):
-        return cls(
-            type=SegmentType.WRITE,
-            offset=offset,
-            length=len(buf),
-            payload=buf,
-        )
-
-    @classmethod
-    def from_stream(cls, stream):
-        type = SegmentType.from_stream(stream)
-        offset = varint.decode_stream(stream)
-        length = varint.decode_stream(stream)
-        payload = None
-        if type == SegmentType.WRITE:
-            payload = stream.read(length)
-            if len(payload) != length:
-                raise EOFError()
-        return cls(
-            type=type,
-            offset=offset,
-            length=length,
-            payload=payload,
-        )
-
-    def write_to_stream(self, stream):
-        self.type.write_to_stream(stream)
-        stream.write(varint.encode(self.offset))
-        stream.write(varint.encode(self.length))
-        if self.type == SegmentType.WRITE:
-            stream.write(self.payload)
+def move_between_fds(src, dst, size):
+    total_sent = 0
+    while size > 0:
+        b = os.read(src, size)
+        written = os.write(dst, b)
+        sent = len(b)
+        assert written == sent
+        logger.debug("moved %d bytes between fds %d -> %d", sent, src, dst)
+        total_sent += sent
+        size -= sent
+        if sent == 0:
+            break
+    return total_sent
 
 
-class Connection(namedtuple('Connection', ('reading_stream', 'writing_stream'))):
+class Connection:
     @classmethod
     def open_desc(cls, desc, mode):
         # try parse to int - it may be fd
@@ -98,30 +49,119 @@ class Connection(namedtuple('Connection', ('reading_stream', 'writing_stream')))
             desc = int(desc)
         except ValueError:
             pass
-        return open(desc, mode)
+        return open(desc, mode, buffering=0)
+
+    def __init__(self, reading_stream, writing_stream, **kwargs):
+        super().__init__(**kwargs)
+        self.reading_stream = reading_stream
+        self.writing_stream = writing_stream
+
+    def handle_transaction(self):
+        i = 0
+        while True:
+            # TODO try-catch only first segment in transaction
+            # others are errors
+            s = self.handle_segment()
+            if not s:
+                break
+            i += 1
+        return i
+
+    def handle_segment(self):
+        logger.debug("awaiting segment")
+        try:
+            type = SegmentType.from_stream(self.reading_stream)
+        except EOFError:
+            return False
+
+        if type == SegmentType.READ:
+            offset = varint.decode_stream(self.reading_stream)
+            size = varint.decode_stream(self.reading_stream)
+            logger.debug("processing READ offset={} size={}".format(offset, size))
+            return self.handle_read(offset, size)
+        elif type == SegmentType.WRITE:
+            offset = varint.decode_stream(self.reading_stream)
+            size = varint.decode_stream(self.reading_stream)
+            logger.debug("processing WRITE header offset={} size={}".format(offset, size))
+            return self.handle_write_header(offset, size)
+        elif type == SegmentType.COMMIT:
+            logger.debug("processing COMMIT")
+            return self.handle_commit()
+        else:
+            raise NotImplementedError("unsupported segment type {}".format(type))
+
+    def handle_read(self, offset, size):
+        raise NotImplementedError("read requests are not supported")
+
+    def handle_write_header(self, offset, size):
+        raise NotImplementedError()
+
+    def handle_commit(self):
+        return False
+
+    def send_read(self, offset, size):
+        logger.debug("sending READ offset=%d size=%d", offset, size)
+        SegmentType.READ.write_to_stream(self.writing_stream)
+        self.writing_stream.write(varint.encode(offset))
+        self.writing_stream.write(varint.encode(size))
+
+    def send_write_header(self, offset, size):
+        logger.debug("sending WRITE header offset=%d size=%d", offset, size)
+        SegmentType.WRITE.write_to_stream(self.writing_stream)
+        self.writing_stream.write(varint.encode(offset))
+        self.writing_stream.write(varint.encode(size))
+
+    def send_commit(self, flush=True):
+        logger.debug("sending COMMIT")
+        SegmentType.COMMIT.write_to_stream(self.writing_stream)
+        if flush:
+            self.writing_stream.flush()
+
+    def read(self, n):
+        b = bytearray(n)
+        offset = 0
+        while offset < n:
+            read = self.reading_stream.readinto(b[offset:])
+            offset += read
+        return b
+
+    def run(self):
+        raise NotImplementedError()
 
 
 class ConnectionToClient(Connection):
-    @classmethod
-    def open(cls, r_desc, w_desc):
-        logger.debug("opening reading connection to client: {}".format(r_desc))
-        r = cls.open_desc(r_desc, 'rb')
-        logger.debug("opening writing connection to client: {}".format(w_desc))
-        w = cls.open_desc(w_desc, 'wb')
-        return cls(
+    def __init__(self, reading_stream, writing_stream, **kwargs):
+        logger.debug("opening reading connection to client: {}".format(reading_stream))
+        r = self.open_desc(reading_stream, 'rb')
+        logger.debug("opening writing connection to client: {}".format(writing_stream))
+        w = self.open_desc(writing_stream, 'wb')
+        super().__init__(
             reading_stream=r,
             writing_stream=w,
+            **kwargs,
         )
+
+    def handle_commit(self):
+        self.send_commit()
+        return super().handle_commit()
+
+    def run(self):
+        while True:
+            r = self.handle_transaction()
+            if r == 0:
+                break
 
 
 class ConnectionToServer(Connection):
-    @classmethod
-    def open(cls, r_desc, w_desc):
-        logger.debug("opening writing connection to server: {}".format(w_desc))
-        w = cls.open_desc(w_desc, 'wb')
-        logger.debug("opening reading connection to server: {}".format(r_desc))
-        r = cls.open_desc(r_desc, 'rb')
-        return cls(
+    def __init__(self, reading_stream, writing_stream, **kwargs):
+        logger.debug("opening writing connection to server: {}".format(writing_stream))
+        w = self.open_desc(writing_stream, 'wb')
+        logger.debug("opening reading connection to server: {}".format(reading_stream))
+        r = self.open_desc(reading_stream, 'rb')
+        super().__init__(
             reading_stream=r,
             writing_stream=w,
+            **kwargs,
         )
+
+

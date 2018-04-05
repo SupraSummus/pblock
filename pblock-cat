@@ -6,26 +6,20 @@ import pblock
 import sys
 
 
-parser = argparse.ArgumentParser(description="Read pblock connection until first unset space.")
+parser = argparse.ArgumentParser(description="Read range from pblock connection.")
 parser.add_argument(
     "-o", "--output",
     dest='output', default=sys.stdout.buffer, type=argparse.FileType('wb'),
     help="where to print received data (dafult stdout)",
 )
 parser.add_argument(
-    "-s", "--offset",
+    "-f", "--offset",
     dest='offset', default=0, type=int,
     help="offset (in bytes) to start reading at",
 )
 parser.add_argument(
-    "-c", "--count",
-    dest='count', default=-1, type=int,
+    "count", type=int,
     help="read at most this many bytes",
-)
-parser.add_argument(
-    "-b", "--block-size",
-    dest='block_size', default=4096, type=int,
-    help="request blocks of this size (default 4096)",
 )
 parser.add_argument(
     "-r", "--reading-stream",
@@ -43,67 +37,50 @@ parser.add_argument(
     help="increases log verbosity for each occurence",
 )
 
+
+class CatClient(pblock.ConnectionToServer):
+    def __init__(self, output, offset, size, **kwargs):
+        super().__init__(**kwargs)
+        self.output = output
+        self.offset = offset
+        self.size = size
+
+    def run(self):
+        self.send_read(self.offset, self.size)
+        self.send_commit()
+        self.handle_transaction()
+
+    def handle_write_header(self, offset, size):
+        assert offset == self.offset, "incoming transmission is not coherent"
+        assert size <= self.size, "incoming transmission is larger than requested"
+        sent = pblock.move_between_fds(self.reading_stream.fileno(), self.output.fileno(), size)
+        assert sent == size, "couldn't move all of data to output"
+        self.offset += size
+        self.size -= size
+        return True
+
+
+
 if __name__ == '__main__':
     arguments = parser.parse_args()
 
     # Sets log level to WARN going more verbose for each new -v.
     logging.basicConfig(
-        format='%(levelname)s: %(message)s',
+        format='%(process)d %(levelname)s: %(message)s',
         level=max(3 - arguments.verbose_count, 0) * 10,
     )
 
     logging.info("pblock-cat running with commandline {}".format(sys.argv))
 
-    connection = pblock.ConnectionToServer.open(
-        arguments.reading_stream,
-        arguments.writing_stream,
+    c = CatClient(
+        reading_stream=arguments.reading_stream,
+        writing_stream=arguments.writing_stream,
+        output=arguments.output,
+        offset=arguments.offset,
+        size=arguments.count,
     )
+    c.run()
+    assert c.size == 0, "not whole requested range was transmitted"
 
-    offset = arguments.offset
-    while arguments.count < 0 or offset < arguments.offset + arguments.count:
-        old_offset = offset
-
-        # request transfer
-        to_read = arguments.block_size
-        if arguments.count >= 0:
-            to_read = min(
-                to_read,
-                arguments.offset + arguments.count - offset,
-            )
-        pblock.Transaction([
-            pblock.Segment.read_request(offset, to_read),
-        ]).write_to_stream(connection.writing_stream)
-        connection.writing_stream.flush()
-        logging.debug("request for data sent (offset {}, length {})".format(
-            offset, arguments.block_size,
-        ))
-
-        # receive response
-        t = pblock.Transaction.from_stream(connection.reading_stream)
-        logging.debug("received incoming transaction ({} segments)".format(len(t.segments)))
-        if len(t.segments) == 0:
-            # no data in this range
-            logging.info("exiting due to empty incoming transaction")
-            sys.exit()
-
-        for segment in sorted(t.segments, key=lambda s: s.offset):
-            if segment.type == pblock.SegmentType.WRITE:
-                logging.debug("received data segment (offset {}, length {})".format(
-                    segment.offset, segment.length,
-                ))
-                if segment.offset != offset:
-                    # received data after a hole in a file
-                    logging.info("exiting due to difference in received offset ({}) and our offset ({})".format(
-                        segment.offset, offset,
-                    ))
-                    sys.exit()
-                arguments.output.write(segment.payload)
-                offset += segment.length
-            else:
-                logging.warning("received segment of unsupported type ({})".format(
-                    segment,
-                ))
-
-        if old_offset == offset:
-            logging.info("exiting because no advance in reading was made")
-            sys.exit()
+    logging.info("pblock-cat exiting successfuly")
+    sys.exit()

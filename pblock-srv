@@ -27,54 +27,42 @@ parser.add_argument(
     help="file to serve",
 )
 
+
+class FileServer(pblock.ConnectionToClient):
+    def __init__(self, file, **kwargs):
+        super().__init__(**kwargs)
+        self.file = file
+
+    def handle_read(self, offset, size):
+        self.send_write_header(offset, size)
+        off = self.file.seek(offset)
+        if off != offset:
+            self.writing_stream.write(bytearray(size))
+        else:
+            read = pblock.move_between_fds(self.file.fileno(), self.writing_stream.fileno(), size)
+            if read < size:
+                self.writing_stream.write(bytearray(size - read))
+        self.writing_stream.flush()
+        return True
+
+
 if __name__ == '__main__':
     arguments = parser.parse_args()
 
     # Sets log level to WARN going more verbose for each new -v.
     logging.basicConfig(
-        format='%(levelname)s: %(message)s',
+        format='%(process)d %(levelname)s: %(message)s',
         level=max(3 - arguments.verbose_count, 0) * 10,
     )
 
     logging.info("pblock-srv running with commandline {}".format(sys.argv))
 
-    connection = pblock.ConnectionToClient.open(
-        arguments.reading_stream,
-        arguments.writing_stream,
+    c = FileServer(
+        reading_stream=arguments.reading_stream,
+        writing_stream=arguments.writing_stream,
+        file=arguments.file,
     )
+    c.run()
 
-    while True:
-        # receive request
-        t = pblock.Transaction.from_stream(connection.reading_stream)
-        if t is None:
-            logging.info("exiting because reding stream is closed")
-            sys.exit()
-        logging.debug("received incoming transaction ({} segments)".format(len(t.segments)))
-
-        response_segments = []
-
-        for segment in t.segments:
-            if segment.type == pblock.SegmentType.WRITE:
-                logging.debug("received data (write) segment (offset {}, length {})".format(
-                    segment.offset, segment.length,
-                ))
-                arguments.file.seek(segment.offset)
-                arguments.file.write(segment.payload)
-            elif segment.type == pblock.SegmentType.READ:
-                logging.debug("received request (read) segment (offset {}, length {})".format(
-                    segment.offset, segment.length,
-                ))
-                arguments.file.seek(segment.offset)
-                d = arguments.file.read(segment.length)
-                response_segments.append(pblock.Segment.write_request(segment.offset, d))
-            else:
-                logging.warning("received segment of unsupported type ({})".format(
-                    segment,
-                ))
-
-        # respond
-        logging.debug("sending back response ({} segments)".format(
-            len(response_segments),
-        ))
-        pblock.Transaction(response_segments).write_to_stream(connection.writing_stream)
-        connection.writing_stream.flush()
+    logging.info("pblock-srv exiting successfuly")
+    sys.exit()
