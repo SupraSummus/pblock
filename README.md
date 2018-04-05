@@ -42,28 +42,32 @@ Tools intended:
 Protocol
 --------
 
-**v0.1**
+**v0.2**
 
-Axioms:
+### Axioms
 
 * PBlock connection allows for acces to single file.
 * PBlock interface works on top of pair of ordered, reliable, unidirectional byte streams.
 * Files are infinite, 0-based byte sequences. We have no notion of file size nor of "missing/unset blocks".
 * Access to files is transactional. In each transaction one can atomicaly write and read file in many locations, not necessarily coherent.
 
-Nice-to-haves:
+### Nice-to-haves
 
 * PBlock interface should integrate well with zero-copy kernel interfaces like `sendfile()` system call. This will ensure space for performance improvement, especialy in large file-mangling pipelines.
 * For large transfers PBlock interface shouldn't add much overhead.
 
-Implementation of preceding statements:
+### Implementation
 
-* Each half of connection is composed of *transaction* objects.
-* Each *transaction* object begins with varint `n` and then goes `n` *segments*.
+* Each half of connection is composed of *segment* objects.
 * Each *segment* has (in order)
-  * `type` (byte `r` or `w`),
+  * *type* (byte `r`, `w` or `c`),
     * `r` segments are used to request data ranges
     * `w` segments are used to transmit data
-  * `offset` varint
-  * `length` varint
-  * if type is `w` then there is payload - blob with size `length`
+    * `c` segments commits pending operations
+  * if *type* is `r` or `w`: *offset* varint
+  * if *type* is `r` or `w`: *length* varint
+  * if *type* is `w`: *payload* - blob with size `length`
+* Client requests atomic reads and writes with `r` and `w` segments, then commits transaction with `c` segment.
+* Server processes segments in order and confirms finished atomic actions with `c` segment.
+  * For every `r` segment it must respond with `w` segment (with exact same *offset* and *length*).
+  * For every `w` segment it performs writes according to is internal semantics.
