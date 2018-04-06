@@ -8,18 +8,12 @@ THE MIGHTY "PBLOCK STREAM" I SHALL CALL THE INTERFACE!1
 Tools
 -----
 
-Tools done:
-*
+* `pblock-read` - read range from pblock stream and print to output
 
 Tools in progress:
 
 * `pblock-srv` - serve a file using pblock stream
   * write support to be tested
-  * after file end there should be ocean of zeroes
-* `pblock-cat` - receive/send file from/to pblock stream
-  * write support to be added
-  * should not support gaps in file
-  * rename to `pblock-read` because it's not like `cat` at all
 * `pblock-mix`
 
 Tools intended:

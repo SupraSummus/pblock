@@ -7,7 +7,7 @@ setup(
     py_modules=['pblock'],
     scripts=[
         'pblock-srv',
-        'pblock-cat',
+        'pblock-read',
         'pblock-mix',
     ],
     install_requires=[

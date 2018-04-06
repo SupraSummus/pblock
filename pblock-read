@@ -19,7 +19,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "count", type=int,
-    help="read at most this many bytes",
+    help="read this many bytes",
 )
 parser.add_argument(
     "-r", "--reading-stream",
@@ -70,7 +70,7 @@ if __name__ == '__main__':
         level=max(3 - arguments.verbose_count, 0) * 10,
     )
 
-    logging.info("pblock-cat running with commandline {}".format(sys.argv))
+    logging.info("running with commandline %s", sys.argv)
 
     c = CatClient(
         reading_stream=arguments.reading_stream,
@@ -82,5 +82,5 @@ if __name__ == '__main__':
     c.run()
     assert c.size == 0, "not whole requested range was transmitted"
 
-    logging.info("pblock-cat exiting successfuly")
+    logging.info("exiting successfuly")
     sys.exit()

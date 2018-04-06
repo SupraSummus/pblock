@@ -16,7 +16,7 @@ nodes:
       5: file_merged
     outputs:
       2: col3
-  - command: [pblock-cat, 8]
+  - command: [pblock-read, 8]
     sockets:
       3: file_merged
     outputs:

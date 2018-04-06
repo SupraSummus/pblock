@@ -23,25 +23,61 @@ parser.add_argument(
     help="increases log verbosity for each occurence",
 )
 parser.add_argument(
+    "-f", "--offset",
+    dest='offset', default=0, type=int,
+    help="address of first file byte",
+)
+parser.add_argument(
     "file", type=argparse.FileType('r+b'),
     help="file to serve",
 )
 
 
 class FileServer(pblock.ConnectionToClient):
-    def __init__(self, file, **kwargs):
+    def __init__(self, file, offset=0, **kwargs):
         super().__init__(**kwargs)
         self.file = file
+        self.offset = offset
 
     def handle_read(self, offset, size):
         self.send_write_header(offset, size)
+        if size <= 0:
+            self.writing_stream.flush()
+            return True
+
+        # file is served at offset
+        offset -= self.offset
+
+        if offset < 0:
+            # we are before file
+            s = min(-offset, size)
+            logging.debug("writing %d zero-bytes (requested before file)", s,)
+            self.writing_stream.write(bytearray(s))
+            offset += s
+            size -= s
+
+        if size <= 0:
+            self.writing_stream.flush()
+            return True
+
         off = self.file.seek(offset)
-        if off != offset:
-            self.writing_stream.write(bytearray(size))
-        else:
-            read = pblock.move_between_fds(self.file.fileno(), self.writing_stream.fileno(), size)
-            if read < size:
-                self.writing_stream.write(bytearray(size - read))
+        if off == offset:
+            logging.debug("writing %d bytes from file at offset %d", size, offset)
+            read = pblock.move_between_fds(
+                self.file.fileno(),
+                self.writing_stream.fileno(),
+                size,
+            )
+            offset += read
+            size -= read
+
+        if size <= 0:
+            self.writing_stream.flush()
+            return True
+
+        # we are after file
+        logging.debug("writing %d zero-bytes (requested after file)", size)
+        self.writing_stream.write(bytearray(size))
         self.writing_stream.flush()
         return True
 
@@ -55,14 +91,15 @@ if __name__ == '__main__':
         level=max(3 - arguments.verbose_count, 0) * 10,
     )
 
-    logging.info("pblock-srv running with commandline {}".format(sys.argv))
+    logging.info("running with commandline %s", sys.argv)
 
     c = FileServer(
         reading_stream=arguments.reading_stream,
         writing_stream=arguments.writing_stream,
         file=arguments.file,
+        offset=arguments.offset,
     )
     c.run()
 
-    logging.info("pblock-srv exiting successfuly")
+    logging.info("exiting successfuly")
     sys.exit()

@@ -2,7 +2,7 @@ nodes:
   - command: [pblock-srv, test_file.txt]
     sockets:
       3: file
-  - command: [pblock-cat, 13]
+  - command: [pblock-read, 13]
     sockets:
       3: file
     outputs:
