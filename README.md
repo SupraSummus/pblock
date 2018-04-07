@@ -8,19 +8,22 @@ THE MIGHTY "PBLOCK STREAM" I SHALL CALL THE INTERFACE!1
 Tools
 -----
 
+* `pblock-srv` - serve a file using pblock stream
+  * should be renamed to `pblock-file`?
 * `pblock-read` - read range from pblock stream and print to output
+* `pblock-write` - write to pblock connection at specified offset
 
 Tools in progress:
 
-* `pblock-srv` - serve a file using pblock stream
-  * write support to be tested
-* `pblock-mix`
+* `pblock-mix` - mix many files like in overlay-fs
 
 Tools intended:
 
-* `pblock-write` - write stdin to pblock at specified offset
-* `pblock-mix` - mix many files like in overlay-fs
-* `pblock-hub` - serve same file to multiple clients
+* `pblock-cp` - copy data from one pblock to another
+* `pblock-swap` - swap data between to pblocks
+* `pblock-server` - serve pblock connection over TCP or UNIX domain socket
+  (This will allow for connecting multiple times to single pblock)
+* `pblock-hub` - like `pblock-server` but works on pipes and client count is fixed in single run
   (Possibly may be integrated with `pblock-mix`?)
 * `pblock-mount` - mount stream using fuse interface
 * `pblock-http` - http(s) (using byte ranges) to pblock stream interface

@@ -8,6 +8,7 @@ setup(
     scripts=[
         'pblock-srv',
         'pblock-read',
+        'pblock-write',
         'pblock-mix',
     ],
     install_requires=[

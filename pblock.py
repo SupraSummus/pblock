@@ -94,7 +94,7 @@ class Connection:
         raise NotImplementedError("read requests are not supported")
 
     def handle_write_header(self, offset, size):
-        raise NotImplementedError()
+        raise NotImplementedError("write requests are not supported")
 
     def handle_commit(self):
         return False

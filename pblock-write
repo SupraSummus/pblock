@@ -6,20 +6,20 @@ import pblock
 import sys
 
 
-parser = argparse.ArgumentParser(description="Read range from pblock connection.")
+parser = argparse.ArgumentParser(description="Write range to pblock connection.")
 parser.add_argument(
-    "-o", "--output",
-    dest='output', default=sys.stdout.buffer, type=argparse.FileType('wb'),
-    help="where to print received data (dafult stdout)",
+    "-i", "--input",
+    dest='input', default=sys.stdin.buffer, type=argparse.FileType('rb'),
+    help="data source (dafult stdout)",
 )
 parser.add_argument(
     "-f", "--offset",
     dest='offset', default=0, type=int,
-    help="offset (in bytes) to start reading at",
+    help="offset (in bytes) to start writing at",
 )
 parser.add_argument(
     "count", type=int,
-    help="read this many bytes",
+    help="write this many bytes",
 )
 parser.add_argument(
     "-r", "--reading-stream",
@@ -38,27 +38,24 @@ parser.add_argument(
 )
 
 
-class ReadClient(pblock.ConnectionToServer):
-    def __init__(self, output, offset, size, **kwargs):
+class WriteClient(pblock.ConnectionToServer):
+    def __init__(self, input, offset, size, **kwargs):
         super().__init__(**kwargs)
-        self.output = output
+        self.input = input
         self.offset = offset
         self.size = size
 
     def run(self):
-        self.send_read(self.offset, self.size)
+        self.send_write_header(self.offset, self.size)
+        written = pblock.move_between_fds(
+            self.input.fileno(),
+            self.writing_stream.fileno(),
+            self.size,
+        )
+        if written < self.size:
+            self.writing_stream.write(bytearray(self.size - written))
         self.send_commit()
         self.handle_transaction()
-
-    def handle_write_header(self, offset, size):
-        assert offset == self.offset, "incoming transmission is not coherent"
-        assert size <= self.size, "incoming transmission is larger than requested"
-        sent = pblock.move_between_fds(self.reading_stream.fileno(), self.output.fileno(), size)
-        assert sent == size, "couldn't move all of data to output"
-        self.offset += size
-        self.size -= size
-        return True
-
 
 
 if __name__ == '__main__':
@@ -72,15 +69,14 @@ if __name__ == '__main__':
 
     logging.info("running with commandline %s", sys.argv)
 
-    c = ReadClient(
+    c = WriteClient(
         reading_stream=arguments.reading_stream,
         writing_stream=arguments.writing_stream,
-        output=arguments.output,
+        input=arguments.input,
         offset=arguments.offset,
         size=arguments.count,
     )
     c.run()
-    assert c.size == 0, "not whole requested range was transmitted"
 
     logging.info("exiting successfuly")
     sys.exit()

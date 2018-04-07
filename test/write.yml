@@ -1,0 +1,25 @@
+nodes:
+  - command:
+      - bash
+      - -c
+      - |
+        set -e
+        T=$(mktemp)
+        pblock-srv "$T"
+        cat "$T"
+        rm "$T"
+    sockets:
+      3: file
+    outputs:
+      1: check
+  - command: [pblock-write, 10]
+    sockets:
+      3: file
+    inputs:
+      0: data
+  - command: [echo, -n, '01234']
+    outputs:
+      1: data
+  - command: [./stdin-eq, '01234\0\0\0\0\0']
+    inputs:
+      0: check

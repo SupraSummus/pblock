@@ -51,7 +51,7 @@ class FileServer(pblock.ConnectionToClient):
         if offset < 0:
             # we are before file
             s = min(-offset, size)
-            logging.debug("writing %d zero-bytes (requested before file)", s,)
+            logging.debug("writing %d zero-bytes (requested before file)", s)
             self.writing_stream.write(bytearray(s))
             offset += s
             size -= s
@@ -80,6 +80,47 @@ class FileServer(pblock.ConnectionToClient):
         self.writing_stream.write(bytearray(size))
         self.writing_stream.flush()
         return True
+
+    def handle_write_header(self, offset, size):
+        if size <= 0:
+            return True
+
+        # file is served at offset
+        offset -= self.offset
+
+        if offset < 0:
+            # we are before file
+            s = min(-offset, size)
+            logging.warning("discarding %d bytes written before file", s)
+            self.read(s)
+            offset += s
+            size -= s
+
+        if size <= 0:
+            return True
+
+        off = self.file.seek(offset)
+        if off == offset:
+            logging.debug("writing %d bytes to file at offset %d", size, offset)
+            written = pblock.move_between_fds(
+                self.reading_stream.fileno(),
+                self.file.fileno(),
+                size,
+            )
+            offset += written
+            size -= written
+
+        if size <= 0:
+            return True
+
+        # we are after file
+        logging.warning("discarding %d bytes written after file", size)
+        self.read(size)
+        return True
+
+    def handle_commit(self):
+        self.file.flush()
+        return super().handle_commit()
 
 
 if __name__ == '__main__':
