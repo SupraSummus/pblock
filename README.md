@@ -19,6 +19,7 @@ Tools in progress:
 
 Tools intended:
 
+* `pblock-mem`/`pblock-exec`/`pblock-ld` - map pblock into memory of child process
 * `pblock-cp` - copy data from one pblock to another
 * `pblock-swap` - swap data between to pblocks
 * `pblock-server` - serve pblock connection over TCP or UNIX domain socket
