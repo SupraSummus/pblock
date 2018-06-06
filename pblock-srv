@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import argparse
+import fcntl
 import logging
 import pblock
 import sys
@@ -38,6 +39,17 @@ class FileServer(pblock.ConnectionToClient):
         super().__init__(**kwargs)
         self.file = file
         self.offset = offset
+
+    def handle_transaction(self, *args, **kwargs):
+        """ Original transaction handling wrapped with file exclusive locking. """
+        fcntl.lockf(self.file.fileno(), fcntl.LOCK_EX)
+        try:
+            return super().handle_transaction(*args, **kwargs)
+        finally:
+            # some funky logic
+            # this actually gets executed before return but before super().handle_transaction(...)
+            self.file.flush()
+            fcntl.lockf(self.file.fileno(), fcntl.LOCK_UN)
 
     def handle_read(self, offset, size):
         self.send_write_header(offset, size)
@@ -117,10 +129,6 @@ class FileServer(pblock.ConnectionToClient):
         logging.warning("discarding %d bytes written after file", size)
         self.read(size)
         return True
-
-    def handle_commit(self):
-        self.file.flush()
-        return super().handle_commit()
 
 
 if __name__ == '__main__':

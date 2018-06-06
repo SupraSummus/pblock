@@ -56,23 +56,22 @@ class Connection:
         self.reading_stream = reading_stream
         self.writing_stream = writing_stream
 
-    def handle_transaction(self):
+    def handle_transaction(self, first_type=None):
+        """ Handle transaction. Before calling this make sure transaction will occur.
+        It may not because of end of stream. """
         i = 0
         while True:
-            # TODO try-catch only first segment in transaction
-            # others are errors
-            s = self.handle_segment()
+            s = self.handle_segment(type=first_type)
+            first_type = None
             if not s:
                 break
             i += 1
         return i
 
-    def handle_segment(self):
+    def handle_segment(self, type=None):
         logger.debug("awaiting segment")
-        try:
+        if type is None:
             type = SegmentType.from_stream(self.reading_stream)
-        except EOFError:
-            return False
 
         if type == SegmentType.READ:
             offset = varint.decode_stream(self.reading_stream)
@@ -141,13 +140,21 @@ class ConnectionToClient(Connection):
             **kwargs,
         )
 
+    def maybe_handle_transaction(self):
+        """ wait for incomin data and then handle transaction """
+        try:
+            type = SegmentType.from_stream(self.reading_stream)
+        except EOFError:
+            return 0
+        return self.handle_transaction(first_type=type)
+
     def handle_commit(self):
         self.send_commit()
         return super().handle_commit()
 
     def run(self):
         while True:
-            r = self.handle_transaction()
+            r = self.maybe_handle_transaction()
             if r == 0:
                 break
 
