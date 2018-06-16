@@ -39,7 +39,7 @@ Tools intended:
 Protocol
 --------
 
-**v0.2**
+**v0.3 draft**
 
 ### Axioms
 
@@ -68,19 +68,31 @@ Just establish your connection and roll.
 
 #### Transmission
 
-* Each half of connection is composed of *segment* objects.
-* Each *segment* has (in order)
-  * *type* (byte `r`, `w` or `c`),
-    * `r` segments are used to request data ranges
-    * `w` segments are used to transmit data
-    * `c` segments commits pending operations
-  * if *type* is `r` or `w`: *offset* varint
-  * if *type* is `r` or `w`: *length* varint
-  * if *type* is `w`: *payload* - blob with size `length`
-* Client requests atomic reads and writes with `r` and `w` segments, then commits transaction with `c` segment.
-* Server processes segments in order and confirms finished atomic actions with `c` segment.
-  * For every `r` segment it must respond with `w` segment (with exact same *offset* and *length*).
-  * For every `w` segment it performs writes according to is internal semantics.
+Each half of connection is composed of *segment* objects. Different types of *segments* are indicated by first byte in segment.
+
+Client sends to server following types of *segments*
+* `r` - read request. After type byte it has
+  * *offset* varint
+  * *length* varint
+* `w` - write requests. After type byte it has
+  * *offset* varint
+  * *length* varint
+  * *payload* bytestring with size `length`
+* `c` - commit request. It has empty payload.
+
+Server sends to client following types of *segments*
+* `d` - data transfer. After type byte it has:
+  * *length* varint
+  * *payload* bytestring with size `length`
+* `n` - no data. Server was unable to provide requested data because of some kind of error.
+* `k` - successful commit confirmation
+* `f` - unsuccessful commit confiramtion. Responses to read requests was ok, but all write requests since last commit won't be persisted. 
+
+Client requests atomic reads and writes with `r` and `w` segments, then commits transaction with `c` segment.
+
+Server processes `r` and `w` segments and confirms finished atomic actions (commited with `c`) with `k` or `f` segment.
+* For every `r` segment it must respond with `d` segment (with exact same *length*) or `n` segment. Writes won't be reflected in read data before commit.
+* For every `w` segment it performs writes or not (if result of commit will be `f`). Either all of none `w` requests in single transaction must be fulfilled.
 
 #### Shutdown
 
