@@ -45,14 +45,26 @@ Protocol
 
 * PBlock connection allows for acces to single file.
 * PBlock interface works on top of pair of ordered, reliable, unidirectional byte streams.
-* PBlock should be minimal and simple. Simple both to understand its operation and to code its implementations.
 * Files are infinite, 0-based byte sequences. We have no notion of file size nor of "missing/unset blocks".
-* Access to files is transactional. In each transaction one can atomicaly write and read file in many locations, not necessarily coherent.
+* Access to file is transactional. In each transaction one can atomicaly write and read file in many locations, not necessarily coherent.
+
+* Handling pblock connection requires at most constant memory (maybe `O(log(file size) + log(transaction size))`, but eh..). "Handling" means:
+  * serving a file
+  * reading/writing pblock range
+  * mixing multiple pblocks into one
+
+* Implementation of multiple readers/single writer locking for transactions must be possible.
+* Server can't request any reaction from client side.
+
+### "Soft axioms"
+
+(aka. "subjective must-haves")
+
+* PBlock should be minimal and simple. Simple both to understand its operation and to code its implementations.
 
 ### Nice-to-haves
 
-* PBlock interface should integrate well with zero-copy kernel interfaces like `sendfile()` system call. This will ensure space for performance improvement, especialy in large file-mangling pipelines.
-* Implementation of multiple readers/single writer locking for transactions should be possible. (This is currently not satisfied, I think.)
+* PBlock interface should integrate well with zero-copy kernel interfaces like `splice()` system call. This will ensure space for performance improvement, especialy in large file-mangling pipelines.
 * Some obvious things:
   * For large transfers PBlock interface shouldn't add much overhead.
 
@@ -91,7 +103,7 @@ Server sends to client following types of *segments*
 Client requests atomic reads and writes with `r` and `w` segments, then commits transaction with `c` segment.
 
 Server processes `r` and `w` segments and confirms finished atomic actions (commited with `c`) with `k` or `f` segment.
-* For every `r` segment it must respond with `d` segment (with exact same *length*) or `n` segment. Writes won't be reflected in read data before commit.
+* For every `r` segment it must respond with `d` segment (with exact same *length*) or `n` segment. Writes must not be reflected in read data before commit.
 * For every `w` segment it performs writes or not (if result of commit will be `f`). Either all of none `w` requests in single transaction must be fulfilled.
 
 #### Shutdown
