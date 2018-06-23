@@ -39,22 +39,32 @@ Tools intended:
 Protocol
 --------
 
-**v0.2**
+**v0.3**
 
 ### Axioms
 
 * PBlock connection allows for acces to single file.
 * PBlock interface works on top of pair of ordered, reliable, unidirectional byte streams.
-* PBlock should be minimal and simple. Simple both to understand its operation and to code its implementations.
 * Files are infinite, 0-based byte sequences. We have no notion of file size nor of "missing/unset blocks".
-* Access to files is transactional. In each transaction one can atomicaly write and read file in many locations, not necessarily coherent.
+* Access to file is transactional. In each transaction one can atomicaly write and read file in many locations, not necessarily coherent.
 
-### Nice-to-haves
+* Handling pblock connection requires at most constant memory (maybe `O(log(file size) + log(transaction size))`, but eh..). "Handling" means:
+  * serving a file
+  * reading/writing pblock range
+  * mixing multiple pblocks into one
 
-* PBlock interface should integrate well with zero-copy kernel interfaces like `sendfile()` system call. This will ensure space for performance improvement, especialy in large file-mangling pipelines.
-* Implementation of multiple readers/single writer locking for transactions should be possible. (This is currently not satisfied, I think.)
-* Some obvious things:
-  * For large transfers PBlock interface shouldn't add much overhead.
+* Implementation of multiple readers/single writer locking for transactions must be possible.
+* Server can't request any reaction from client side.
+
+"Soft axioms" aka. "subjective must-haves":
+
+* PBlock should be minimal and simple. Simple both to understand its operation and to code its implementations.
+
+Nice-to-haves:
+
+* PBlock interface should integrate well with zero-copy kernel interfaces like `splice()` system call. This will ensure space for performance improvement, especialy in large file-mangling pipelines.
+* For large transfers PBlock interface shouldn't add much overhead.
+* Amount of reads of underlying streams shuold be minimized.
 
 ### Implementation
 
@@ -68,19 +78,38 @@ Just establish your connection and roll.
 
 #### Transmission
 
-* Each half of connection is composed of *segment* objects.
-* Each *segment* has (in order)
-  * *type* (byte `r`, `w` or `c`),
-    * `r` segments are used to request data ranges
-    * `w` segments are used to transmit data
-    * `c` segments commits pending operations
-  * if *type* is `r` or `w`: *offset* varint
-  * if *type* is `r` or `w`: *length* varint
-  * if *type* is `w`: *payload* - blob with size `length`
-* Client requests atomic reads and writes with `r` and `w` segments, then commits transaction with `c` segment.
-* Server processes segments in order and confirms finished atomic actions with `c` segment.
-  * For every `r` segment it must respond with `w` segment (with exact same *offset* and *length*).
-  * For every `w` segment it performs writes according to is internal semantics.
+Each half of connection is composed of *segment* objects. Different types of *segments* are indicated by first byte in segment.
+
+Client sends to server following types of *segments*
+* `r` - read request. After type byte it has
+  * *offset* varint32
+  * *length* varint32
+* `w` - write requests. After type byte it has
+  * *offset* varint32
+  * *length* varint32
+  * *payload* bytestring with size `length`
+* `c` - commit request. It has empty payload.
+
+Server sends to client following types of *segments*
+* `d` - data transfer. After type byte it has:
+  * *length* varint32
+  * *payload* bytestring with size `length`
+* `k` - successful commit confirmation
+* `f` - unsuccessful commit confiramtion. Responses to read requests was ok, but all write requests since last commit won't be persisted. 
+
+Client requests atomic reads and writes with `r` and `w` segments, then commits transaction with `c` segment.
+
+Server processes `r` and `w` segments and confirms finished atomic actions (commited with `c`) with `k` or `f` segment.
+* For every `r` segment it must respond with `d` segment (with exact same *length*). Writes must not be reflected in read data before commit.
+* For every `w` segment it performs writes or not (if result of commit will be `f`). Either all of none `w` requests in single transaction must be fulfilled.
+
+If client wants to init RW transaction it should begin with `w` request (for example `w 0 0`).
+
+Server should respond to segments as soon as it is possible. It shouldn't wait for commit.
+
+#### varint32
+
+Like regular varint, but instead of bytes it operates on 4-byte chunks (in network order). MSB in each chunk indicates if there will be next chunk. 0 is coded by single chunk.
 
 #### Shutdown
 
