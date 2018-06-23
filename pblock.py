@@ -7,6 +7,10 @@ import varint
 logger = logging.getLogger(__name__)
 
 
+class ProtocolError(Exception):
+    pass
+
+
 class SegmentType(Enum):
     READ = b'r'
     WRITE = b'w'
@@ -16,11 +20,11 @@ class SegmentType(Enum):
     def from_stream(cls, stream):
         read_value = stream.read(1)
         if len(read_value) != 1:
-            raise EOFError()
+            raise ProtocolError("failed to read segment type (unexpected end of stream)")
         for v in cls:
             if v.value == read_value:
                 return v
-        assert(False)
+        raise ProtocolError("unknown segment type '{}'".format(read_value))
 
     def write_to_stream(self, stream):
         stream.write(self.value)
